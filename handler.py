@@ -8,7 +8,7 @@ import os
 # Initialize the engine
 engine = SGlangEngine()
 engine.start_server()
-engine.wait_for_server()
+engine.wait_for_server(timeout=2400)
 
 
 def get_max_concurrency(default=300):
