@@ -1,0 +1,42 @@
+name: Build and push to GHCR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The base image lmsysorg/sglang:v0.5.2-cu126 is ~15GB — free space on the
+      # default runner (~14GB free) so the build+push fits.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc "/usr/local/share/boost" \
+                      "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android /opt/hostedtoolcache
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/worker-sglang-glm:latest
+          provenance: false
