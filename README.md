@@ -71,11 +71,80 @@ NCCL_SHM_DISABLE=1
 **Do NOT set** `LOAD_FORMAT=fastsafetensors` (crashes the sglang v0.5.14 scheduler) or
 `DG_JIT_CACHE_DIR` (ignored by DeepGEMM here; the cache is already baked at the default path).
 
-**Cold vs warm:** no-volume cold start ≈ 35-40 min (dominated by the 368 GB download; $0 idle,
-best for weeks-idle use). For a faster cold start, stage the weights on a **region-pinned
-network volume**, then set `MODEL_NAME` to the volume path + `HF_HUB_OFFLINE=1`. Warm inference
-is ~2-3 s (the baked cache skips the JIT). Measured on 4×H200: **~68 tok/s single, ~456 peak,
-TTFT ~1-3 s** (near-flat TTFT up to ~18 k-token prompts).
+**Warm inference** is ~2-3 s (the baked cache skips the JIT). Measured on 4×H200:
+**~68 tok/s single, ~456 peak, TTFT ~1-3 s** (near-flat TTFT up to ~18 k-token prompts).
+Cold-start numbers depend on the load mode — see **[Load modes](#load-modes)** below.
+
+## Environment variables
+
+Every env the worker reads. `engine.py` maps `MODEL_NAME→--model-path` etc. onto the
+`sglang.launch_server` command; booleans are appended only when set to `true`/`1`/`yes`.
+The values below are the tested GLM-5.2-W4AFP8 defaults (also shown in the env block above).
+
+| Variable | Maps to / effect | Value (GLM-5.2-W4AFP8) | Notes |
+|---|---|---|---|
+| `MODEL_NAME` | `--model-path` | `PhalaCloud/GLM-5.2-W4AFP8` **or** `/runpod-volume/GLM-5.2-W4AFP8` | HF id (no-volume) or on-volume local path (volume mode). |
+| `QUANTIZATION` | `--quantization` | `w4afp8` | The model's quant scheme. |
+| `TENSOR_PARALLEL_SIZE` | `--tensor-parallel-size` | `4` | Must equal the GPU count per worker (4×H200). |
+| `CONTEXT_LENGTH` | `--context-length` | `32768` | Max sequence length. |
+| `MEM_FRACTION_STATIC` | `--mem-fraction-static` | `0.85` | Fraction of VRAM for weights + KV. |
+| `REASONING_PARSER` | `--reasoning-parser` | `glm45` | Parses GLM reasoning output. |
+| `TOOL_CALL_PARSER` | `--tool-call-parser` | `glm47` | Parses GLM tool calls. |
+| `KV_CACHE_DTYPE` | `--kv-cache-dtype` | `fp8_e4m3` | Fork addition (upstream lacks it). |
+| `TRUST_REMOTE_CODE` | `--trust-remote-code` (bool) | `true` | Needed for the GLM custom arch. |
+| `DISABLE_SHARED_EXPERTS_FUSION` | `--disable-shared-experts-fusion` (bool) | `true` | Fork addition; required for this MoE. |
+| `EXTRA_ARGS` | raw shell-split passthrough | `--cuda-graph-max-bs 16` | Any flag not otherwise mapped (fork escape hatch). |
+| `NCCL_SHM_DISABLE` | NCCL env (not a flag) | `1` | Multi-GPU: disables NCCL's /dev/shm transport (RunPod's tiny 64 MB shm otherwise kills a TP worker at init). |
+| `HF_TOKEN` | Hugging Face auth | *(unset)* | Only needed for a **gated** `MODEL_NAME`; the default is public. `stage_volume.py` forwards it too. |
+| `HF_HUB_OFFLINE` | transformers/sglang: no hub calls | `1` (**volume mode only**) | Set **only** when `MODEL_NAME` is a local `/runpod-volume/...` path so the loader never contacts HF. |
+
+Infra defaults you normally leave alone: `HOST` (`0.0.0.0`) and `PORT` (`30000`) are read by
+`engine.py`; `SERVED_MODEL_NAME`, `LOAD_FORMAT`, `DTYPE`, and the many other upstream
+`sglang.launch_server` flags are all still available via the same env→flag mapping if needed.
+
+## Load modes
+
+Two ways to get the 368 GB of weights in front of the worker. Pick per your idle pattern.
+
+### No-volume (default)
+- `MODEL_NAME=PhalaCloud/GLM-5.2-W4AFP8` (do **not** set `HF_HUB_OFFLINE`), container disk **420 GB**.
+- Cold start **≈ 36 min** — dominated by the 368 GB Hugging Face download on each fresh worker.
+- **$0 idle.** Best for weeks-idle / bursty use where you never pay for standing storage.
+
+### Volume (fast)
+- Run **`stage_volume.py`** once to pre-stage the weights onto a region-pinned RunPod network
+  volume (see below), attach that volume to the endpoint, then set:
+  ```
+  MODEL_NAME=/runpod-volume/GLM-5.2-W4AFP8
+  HF_HUB_OFFLINE=1
+  ```
+  (keep every other env from the table above).
+- Cold start **≈ 5-9 min** — the worker reads weights locally from the volume instead of HF.
+- Small **standing $/mo** for the volume storage.
+- **Co-location constraint:** a RunPod network volume is datacenter-local, so the endpoint
+  **must run in the volume's datacenter** (an `M22`-style region, e.g. the `stage_volume.py`
+  default `US-GA-2`), and that datacenter **must have 4×H200 available**. If it doesn't, you
+  can't attach the volume there — fall back to no-volume mode or stage into a DC that has both.
+
+#### Staging the volume — `stage_volume.py`
+A self-contained helper (stdlib + `requests` only) that stages the weights once:
+
+```
+export RUNPOD_API_KEY=...
+python3 stage_volume.py --dry-run          # $0 — print the exact plan first
+python3 stage_volume.py                     # create-or-reuse volume, download, verify, sweep pod
+# uv run --with requests python stage_volume.py --dry-run   # if requests isn't in the base env
+```
+
+It (1) create-or-reuses a network volume (idempotent by name) in `--datacenter US-GA-2`
+(`--size 480` GB default), (2) spins a **cheap** staging pod in that same datacenter with the
+volume mounted at `/runpod-volume` that runs `huggingface-cli download … --local-dir
+/runpod-volume/GLM-5.2-W4AFP8` (via `hf_transfer`), (3) polls for completion, then in a
+`try/finally` **always terminates the staging pod** (a leaked pod bills) while **keeping the
+volume**. It prints the volume id, the on-volume model path, and the volume-mode env above.
+`--no-wait` creates the pod and prints a watch URL instead of blocking; `--delete-volume <id>`
+sweeps a volume you no longer need. `HF_TOKEN` (env) is forwarded for gated repos but the
+default model is public.
 
 ## License
 Inherits upstream's license (see `LICENSE`). Derived from `runpod-workers/worker-sglang`.
