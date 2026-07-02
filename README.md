@@ -111,7 +111,7 @@ Two ways to get the 368 GB of weights in front of the worker. Pick per your idle
 - Cold start **≈ 36 min** — dominated by the 368 GB Hugging Face download on each fresh worker.
 - **$0 idle.** Best for weeks-idle / bursty use where you never pay for standing storage.
 
-### Volume (fast)
+### Volume (pre-staged weights — deterministic, not necessarily faster)
 - Run **`stage_volume.py`** once to pre-stage the weights onto a region-pinned RunPod network
   volume (see below), attach that volume to the endpoint, then set:
   ```
@@ -119,7 +119,15 @@ Two ways to get the 368 GB of weights in front of the worker. Pick per your idle
   HF_HUB_OFFLINE=1
   ```
   (keep every other env from the table above).
-- Cold start **≈ 5-9 min** — the worker reads weights locally from the volume instead of HF.
+- **Measured cold start ≈ 19 min** on 4×H200 — the **network-volume weight READ (~12 min)**
+  dominates, + baked DeepGEMM ~2 min + graph ~4 min. **Reality check:** this is *not*
+  dramatically faster than no-volume — a **direct HF download to local disk on a fast H200 node
+  was ~12.6 min total** (R4), so on a fast-network node **no-volume can actually beat a volume.**
+  The 368 GB weight I/O is slow either way; pre-staging doesn't fix that.
+- **So a volume's real value is determinism, not speed:** it **caps** weight I/O at the volume
+  read time (~12 min) regardless of node network — a **hedge** against slow-download workers
+  (a no-volume *serverless* cold start was ~36 min on a slow worker), plus no re-download egress
+  on repeat cold starts and no Hugging Face dependency. Pick it for *predictability*, not to go fast.
 - Small **standing $/mo** for the volume storage.
 - **Co-location constraint:** a RunPod network volume is datacenter-local, so the endpoint
   **must run in the volume's datacenter** (an `M22`-style region, e.g. the `stage_volume.py`
