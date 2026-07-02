@@ -10,28 +10,6 @@ engine = SGlangEngine()
 engine.start_server()
 engine.wait_for_server(timeout=2400)
 
-# Warm-up: force the DeepGEMM JIT / lazy kernel compile to run NOW, during worker
-# init — BEFORE runpod.serverless.start() begins pulling real jobs. GLM-5-class
-# MoE models JIT DeepGEMM lazily on the FIRST real inference (~30 min on H200 —
-# SGLang #20401); /v1/models returns 200 before that, so wait_for_server() passes
-# "ready" prematurely and the first /run request then blocks for the whole JIT and
-# looks like a permanent stall. Running one dummy inference here absorbs that cost
-# at load time, so real requests are fast (and it doubles as /health_generate).
-def _warmup():
-    try:
-        r = requests.post(
-            f"{engine.base_url}/v1/chat/completions",
-            json={"model": engine.model or "default",
-                  "messages": [{"role": "user", "content": "hi"}],
-                  "max_tokens": 8, "temperature": 0},
-            timeout=(10, 2400))
-        print(f"[warmup] status={r.status_code} — JIT/kernels compiled at init", flush=True)
-    except Exception as e:  # never block startup on a warm-up failure
-        print(f"[warmup] skipped/failed: {e!r}", flush=True)
-
-
-_warmup()
-
 
 def get_max_concurrency(default=300):
     """
