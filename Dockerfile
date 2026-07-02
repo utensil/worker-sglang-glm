@@ -1,4 +1,6 @@
-FROM lmsysorg/sglang:v0.5.2-cu126
+# Bumped from upstream's v0.5.2 → v0.5.14 so the image has GLM-5.2's
+# GlmMoeDsaForCausalLM (DSA) arch + w4afp8 support (v0.5.2 predates it).
+FROM lmsysorg/sglang:v0.5.14-cu129
 
 # Install uv package manager
 RUN curl -Ls https://astral.sh/uv/install.sh | sh \
