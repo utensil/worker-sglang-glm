@@ -66,8 +66,12 @@ DEFAULT_IMAGE = "python:3.11-slim"         # only needs python + pip + network
 # Cheap GPU candidates (first that has capacity wins). A GPU pod tends to get
 # more network bandwidth than a bare CPU flavor, so it is the default; use
 # --compute CPU for the absolute cheapest.
-DEFAULT_GPUS = ["NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 3090"]
-DEFAULT_CPU_FLAVORS = ["cpu3c-2-4", "cpu5c-2-4"]
+# L4 first: cheap (~$0.43/hr) and stocked in the H200 datacenters this template
+# targets, so it co-locates with the volume where community cards may be absent.
+DEFAULT_GPUS = ["NVIDIA L4", "NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 3090"]
+# RunPod REST cpuFlavorIds enum is the BASE id (cpu3c/cpu3g/cpu3m/cpu5c/cpu5g/cpu5m),
+# NOT the "-2-4" instance-size suffix (that shape 400s the /pods schema).
+DEFAULT_CPU_FLAVORS = ["cpu3c", "cpu5c"]
 
 
 def _hdr(key, json_body=False):
@@ -139,7 +143,8 @@ def build_start_cmd(model, name):
 
 # ---- 2. staging pod: create (REST) ----------------------------------------
 def create_staging_pod(key, image, volume_id, datacenter_id, script, name,
-                       compute, gpus, cpu_flavors, container_disk_gb, hf_token):
+                       compute, gpus, cpu_flavors, container_disk_gb, hf_token,
+                       cloud="COMMUNITY"):
     """Create the cheapest staging pod in the volume's datacenter with the volume
     mounted at /runpod-volume and :8000 exposed for the completion poll. Tries
     each compute candidate (cheapest first) until one has capacity. Returns the
@@ -165,7 +170,7 @@ def create_staging_pod(key, image, volume_id, datacenter_id, script, name,
         attempts = [{"computeType": "CPU", "cpuFlavorIds": [f],
                      "cpuFlavorPriority": "availability"} for f in cpu_flavors]
     else:
-        attempts = [{"computeType": "GPU", "cloudType": "COMMUNITY",
+        attempts = [{"computeType": "GPU", "cloudType": cloud,
                      "gpuTypeIds": [g], "gpuCount": 1} for g in gpus]
     tried = []
     for extra in attempts:
@@ -275,7 +280,7 @@ def print_dry_run(a):
     if a.compute.upper() == "CPU":
         print(f"     computeType      : CPU  (cpuFlavorIds {a.cpu_flavors})")
     else:
-        print(f"     computeType      : GPU  (COMMUNITY, gpuTypeIds {a.gpus}, gpuCount 1)")
+        print(f"     computeType      : GPU  ({a.cloud}, gpuTypeIds {a.gpus}, gpuCount 1)")
     print(f"     dockerStartCmd   :\n       {script}")
     print(f"3. poll https://<pod>-{STAGE_PORT}.proxy.runpod.net/{a.name}/.stage_complete")
     print(f"4. try/finally: TERMINATE the staging pod (DELETE {REST}/pods/<id>),")
@@ -315,6 +320,9 @@ def main():
                     help="staging compute type (default GPU)")
     ap.add_argument("--gpus", nargs="+", default=DEFAULT_GPUS,
                     help="cheap GPU candidates, cheapest first")
+    ap.add_argument("--cloud", default="COMMUNITY", choices=["COMMUNITY", "SECURE"],
+                    help="GPU cloud type (default COMMUNITY; use SECURE if the DC "
+                         "lacks community capacity — a SECURE L4 is still cheap)")
     ap.add_argument("--cpu-flavors", nargs="+", default=DEFAULT_CPU_FLAVORS,
                     help="cheap CPU flavor candidates (for --compute CPU)")
     ap.add_argument("--container-disk", type=int, default=20,
@@ -352,7 +360,8 @@ def main():
     vid, dc = ensure_volume(a.volume_name, a.size, a.datacenter, key)
     script = build_start_cmd(a.model, a.name)
     pid = create_staging_pod(key, a.image, vid, dc, script, a.name, a.compute,
-                             a.gpus, a.cpu_flavors, a.container_disk, hf_token)
+                             a.gpus, a.cpu_flavors, a.container_disk, hf_token,
+                             cloud=a.cloud)
 
     if a.no_wait:
         watch = f"https://{pid}-{STAGE_PORT}.proxy.runpod.net/{a.name}/.stage_complete"

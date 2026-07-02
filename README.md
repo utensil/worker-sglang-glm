@@ -146,5 +146,19 @@ volume**. It prints the volume id, the on-volume model path, and the volume-mode
 sweeps a volume you no longer need. `HF_TOKEN` (env) is forwarded for gated repos but the
 default model is public.
 
+**Staging is slow — budget ~1-2 h (and it's a one-time cost).** Writing 368 GB to a *network*
+volume is bound by the volume's **write throughput** (~45-150 MB/s), *not* the GPU node's
+download speed — a fast GPU does not make it much faster, so the cheap default (L4) is the right
+pick. `huggingface-cli download` is **resumable**: if a run hits `--timeout-min`, just re-run
+(it skips completed shards and continues; expect it to re-verify existing files on the volume
+first, which itself takes a while). Raise `--timeout-min` (default 120) for fewer re-runs.
+
+**GPU/capacity tips (verified the hard way):**
+- Community capacity is unreliable in the H200 datacenters this targets — if `--compute GPU`
+  can't place, pass **`--cloud SECURE`**; a **SECURE L4 (~$0.43/hr)** is a reliable cheap staging box.
+- `--gpus` values are RunPod **REST gpu-type ids**, which differ from console *display* names
+  (e.g. "H100 SXM" → `NVIDIA H100 80GB HBM3`, and L4 → `NVIDIA L4`). A `400 … items/enum` error
+  means the id string is wrong; a `500 … could not find any pods` means no capacity for it there.
+
 ## License
 Inherits upstream's license (see `LICENSE`). Derived from `runpod-workers/worker-sglang`.
