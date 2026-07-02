@@ -1,0 +1,24 @@
+{
+  "tests": [
+    {
+      "name": "chat_smoke_2plus2",
+      "input": {
+        "openai_route": "/v1/chat/completions",
+        "openai_input": {
+          "model": "PhalaCloud/GLM-5.2-W4AFP8",
+          "messages": [
+            { "role": "user", "content": "What is 2+2? Reply with only the number." }
+          ],
+          "max_tokens": 16,
+          "temperature": 0
+        }
+      },
+      "timeout": 2700000
+    }
+  ],
+  "config": {
+    "gpuTypeId": "NVIDIA H200",
+    "gpuCount": 4,
+    "allowedCudaVersions": ["12.9", "12.8"]
+  }
+}
