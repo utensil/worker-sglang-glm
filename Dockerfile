@@ -48,4 +48,14 @@ RUN --mount=type=secret,id=HF_TOKEN,required=false \
         python3 download_model.py; \
     fi
 
+# Bake the DeepGEMM JIT cache (SM90 / Hopper H200 W4AFP8 GEMM kernels, extracted
+# from a live GLM-5.2-W4AFP8 4xH200 pod) so the serverless cold start SKIPS the
+# DeepGEMM JIT recompile — which crawls on the container disk / a network volume
+# (~10-20min, M20/M26) and is what made serverless cold starts unusable.
+# IMPORTANT: DeepGEMM reads its DEFAULT ~/.cache/deep_gemm here — DG_JIT_CACHE_DIR
+# is IGNORED by sglang v0.5.14's DeepGEMM (empirically verified: the cache landed
+# in /root/.cache/deep_gemm despite DG_JIT_CACHE_DIR=/root/dg_cache), so bake to
+# exactly that default path, not the env-var path.
+COPY dg_cache/deep_gemm/ /root/.cache/deep_gemm/
+
 CMD ["python3", "handler.py"]
