@@ -1,14 +1,34 @@
 import asyncio
+import threading
 import requests
 from engine import SGlangEngine
 from utils import process_response
 import runpod
 import os
 
-# Initialize the engine
+# Load the model in a BACKGROUND thread and call runpod.serverless.start()
+# IMMEDIATELY (bottom of file). Why: a big model (GLM-5.2 ~556s load) blocking at
+# import exceeds RunPod's ~500s worker-recycle window, so the platform kills the
+# worker before it registers to pull jobs → infinite restart loop (CONFIRMED
+# 2026-07-02 via console logs). Registering first (worker "ready" in seconds)
+# beats the recycle; the first job then waits for the model to finish loading
+# (raise the endpoint Execution Timeout above the load time).
 engine = SGlangEngine()
-engine.start_server()
-engine.wait_for_server(timeout=2400)
+_state = {"ready": False, "error": None}
+
+
+def _load_model():
+    try:
+        engine.start_server()
+        engine.wait_for_server(timeout=2400)
+        _state["ready"] = True
+        print("[load] model ready — accepting jobs", flush=True)
+    except Exception as e:
+        _state["error"] = repr(e)
+        print(f"[load] FAILED: {e!r}", flush=True)
+
+
+threading.Thread(target=_load_model, daemon=True).start()
 
 
 def get_max_concurrency(default=300):
@@ -27,6 +47,15 @@ def get_max_concurrency(default=300):
 
 async def async_handler(job):
     """Handle the requests asynchronously."""
+    # The worker registered before the model finished loading (so it wasn't
+    # recycled). The FIRST job waits here for the background load to complete;
+    # later jobs find it ready and proceed immediately. Keep the endpoint's
+    # Execution Timeout above the model load time so this wait doesn't get killed.
+    while not _state["ready"]:
+        if _state["error"]:
+            yield {"error": f"model failed to load: {_state['error']}"}
+            return
+        await asyncio.sleep(3)
     job_input = job["input"]
 
     # Case 1: full OpenAI style payload where caller already specifies the route.
