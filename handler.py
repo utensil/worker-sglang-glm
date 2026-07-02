@@ -10,6 +10,28 @@ engine = SGlangEngine()
 engine.start_server()
 engine.wait_for_server(timeout=2400)
 
+# Warm-up: force the DeepGEMM JIT / lazy kernel compile to run NOW, during worker
+# init — BEFORE runpod.serverless.start() begins pulling real jobs. GLM-5-class
+# MoE models JIT DeepGEMM lazily on the FIRST real inference (~30 min on H200 —
+# SGLang #20401); /v1/models returns 200 before that, so wait_for_server() passes
+# "ready" prematurely and the first /run request then blocks for the whole JIT and
+# looks like a permanent stall. Running one dummy inference here absorbs that cost
+# at load time, so real requests are fast (and it doubles as /health_generate).
+def _warmup():
+    try:
+        r = requests.post(
+            f"{engine.base_url}/v1/chat/completions",
+            json={"model": engine.model or "default",
+                  "messages": [{"role": "user", "content": "hi"}],
+                  "max_tokens": 8, "temperature": 0},
+            timeout=(10, 2400))
+        print(f"[warmup] status={r.status_code} — JIT/kernels compiled at init", flush=True)
+    except Exception as e:  # never block startup on a warm-up failure
+        print(f"[warmup] skipped/failed: {e!r}", flush=True)
+
+
+_warmup()
+
 
 def get_max_concurrency(default=300):
     """
@@ -38,7 +60,10 @@ async def async_handler(job):
         openai_url = f"{engine.base_url}" + openai_route
         headers = {"Content-Type": "application/json"}
 
-        response = requests.post(openai_url, headers=headers, json=openai_input)
+        # timeout=(connect, read): fail fast instead of hanging the whole job if
+        # the server stalls (e.g. a lazy first-inference JIT that the warm-up missed).
+        response = requests.post(openai_url, headers=headers, json=openai_input,
+                                 timeout=(10, 2400))
         # Process the streamed response
         if openai_input.get("stream", False):
             for formated_chunk in process_response(response):
@@ -58,7 +83,7 @@ async def async_handler(job):
         if "model" not in job_input:
             job_input["model"] = engine.model or "default"
 
-        response = requests.post(openai_url, headers=headers, json=job_input)
+        response = requests.post(openai_url, headers=headers, json=job_input, timeout=(10, 2400))
 
         if job_input.get("stream", False):
             for formated_chunk in process_response(response):
@@ -73,7 +98,7 @@ async def async_handler(job):
         generate_url = f"{engine.base_url}/generate"
         headers = {"Content-Type": "application/json"}
         # Directly pass `job_input` to `json`. Can we tell users the possible fields of `job_input`?
-        response = requests.post(generate_url, json=job_input, headers=headers)
+        response = requests.post(generate_url, json=job_input, headers=headers, timeout=(10, 2400))
 
         if response.status_code == 200:
             yield response.json()
