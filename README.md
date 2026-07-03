@@ -75,6 +75,16 @@ NCCL_SHM_DISABLE=1
 **~68 tok/s single, ~456 peak, TTFT ~1-3 s** (near-flat TTFT up to ~18 k-token prompts).
 Cold-start numbers depend on the load mode — see **[Load modes](#load-modes)** below.
 
+## Deploy as a pod (published pod template)
+
+Besides the serverless manifest, a **public RunPod pod template** ships this same baked image +
+serve command for launching GLM-5.2 as a persistent GPU pod — find **"GLM-5.2-W4AFP8 (SGLang
+4xH200)"** in the console **Explore** section, or recreate it under your own account with
+`python3 create_pod_template.py` (self-contained; `--dry-run` prints the payload). Deploy it on
+**4×H200**, port 8000 = OpenAI API. It's env-driven, so the same template serves **both load
+modes** with no change — keep the default `MODEL_NAME` for no-volume, or set it to the
+`/runpod-volume/...` path + `HF_HUB_OFFLINE=1` and attach a staged volume (see below).
+
 ## Environment variables
 
 Every env the worker reads. `engine.py` maps `MODEL_NAME→--model-path` etc. onto the
