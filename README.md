@@ -75,6 +75,38 @@ pre-stage the weights on a network volume (a deterministic ~19 min - see [Load m
 Note that on a fast node a plain no-volume download can be about as quick, so a volume mainly buys
 *predictability*, not raw speed.
 
+## HiCache (long-context KV offload)
+
+**Off by default. Turn it on for long-context, reuse-heavy workloads** - load a large document
+or session once, then ask many questions against it. Set `ENABLE_HICACHE=true`.
+
+**What it does.** It tiers the KV cache from GPU to host RAM. When a large reused context no
+longer fits in the GPU KV pool, HiCache **restores it from CPU** instead of recomputing the whole
+prefill from scratch.
+
+**When it helps (measured on 4 x H200).** The payoff scales with context length, because it only
+saves you the recompute you would otherwise pay:
+- At **18k** tokens: no benefit - recomputing an evicted prefix is only ~4 s, nothing to save.
+- At **43k** tokens: an evicted context re-read in **2.5 s vs 7.7 s recompute (~3x faster)**.
+- At **100k-500k**: a recompute is tens of seconds to minutes, so restoring from CPU saves
+  proportionally more. Rule of thumb: **turn it on above ~50k reuse; leave it off below.**
+
+**Enable and tune:**
+```
+ENABLE_HICACHE=true
+CONTEXT_LENGTH=131072       # room for your long contexts (more KV VRAM)
+MAX_TOTAL_TOKENS=200000     # GPU KV pool; larger = fewer evictions
+HICACHE_RATIO=2             # CPU tier size = ratio x GPU pool; raise it to hold more
+```
+The actively-reused context stays hot in the CPU tier and keeps restoring cheaply; only the
+*oldest* contexts age out (LRU), so raise `HICACHE_RATIO` if you juggle several big contexts. The
+remaining knobs have sensible defaults: `HICACHE_IO_BACKEND=kernel`, `HICACHE_MEM_LAYOUT=page_first`,
+`HICACHE_WRITE_POLICY=write_through`, `PAGE_SIZE=64`.
+
+**Image:** this capability ships on the **`hicache` branch / `:hicache` image tag**
+(`ghcr.io/utensil/worker-sglang-glm:hicache`), kept separate from the default `:latest` so the
+published template stays frozen. Deploy that tag to use it.
+
 ## Deploy as a pod (published pod template)
 
 Besides the serverless template, a **public RunPod pod template** ships this same baked image +
@@ -106,6 +138,9 @@ when set to `true`/`1`/`yes`.
 | `TRUST_REMOTE_CODE` | `--trust-remote-code` (bool) | `true` | Needed for the GLM custom arch. |
 | `DISABLE_SHARED_EXPERTS_FUSION` | `--disable-shared-experts-fusion` (bool) | `true` | Fork addition; required for this MoE. |
 | `EXTRA_ARGS` | raw shell-split passthrough | *(unset)* | Any flag not otherwise mapped, e.g. `--cuda-graph-max-bs 16` (fork escape hatch). |
+| `ENABLE_HICACHE` | `--enable-hierarchical-cache` + tier knobs (bool) | *(unset = off)* | KV offload to host RAM for long-context reuse. See [HiCache](#hicache-long-context-kv-offload) for `HICACHE_RATIO` etc. |
+| `PAGE_SIZE` | `--page-size` | *(unset; 64 under HiCache)* | KV page size. HiCache `page_first` layout needs it, defaulted to 64. |
+| `MAX_TOTAL_TOKENS` | `--max-total-tokens` | *(unset)* | GPU KV pool size. Larger = fewer evictions (relevant with HiCache). |
 | `NCCL_SHM_DISABLE` | NCCL env (not a flag) | set `1` if TP init hangs | Multi-GPU: disables NCCL's /dev/shm transport (RunPod's tiny 64 MB shm can otherwise kill a TP worker at init). |
 | `HF_TOKEN` | Hugging Face auth | *(unset, recommended)* | **Required** for a gated `MODEL_NAME`. Even for the public default, a read token authenticates the download and lifts anonymous HF rate limits, reducing 429 throttling on the 368 GB pull - faster, steadier cold start and staging. |
 | `HF_HUB_OFFLINE` | transformers/sglang: no hub calls | *(unset)* | Set `1` **only** in volume mode (local `/runpod-volume/...` path) so the loader never contacts HF. |
