@@ -39,7 +39,8 @@ curl https://api.runpod.ai/v2/<YOUR_ENDPOINT_ID>/openai/v1/chat/completions \
 Any OpenAI SDK works too - set `base_url` to `https://api.runpod.ai/v2/<ENDPOINT_ID>/openai/v1`
 and `api_key` to your RunPod key. Your endpoint is **private to your own RunPod API key**; no
 secrets are baked into the image, and the default model is public so **no Hugging Face token is
-needed**.
+required** - though setting one is recommended, since it speeds and steadies the 368 GB download
+(see [What to expect](#what-to-expect)).
 
 ## What to expect
 
@@ -52,6 +53,12 @@ download the full 368 GB checkpoint before it can answer. The worker *registers*
 (so RunPod won't recycle it), but the **first job waits** for the download and model load - that
 is why the Execution Timeout must be high. Budget for one slow first request per cold worker;
 everything after is warm.
+
+**Tip: set `HF_TOKEN` to speed the download.** Even though the default model is public,
+authenticating lifts Hugging Face's **anonymous rate limits**, so the 368 GB multi-shard pull is
+less likely to hit 429 throttling and tends to download faster and more consistently. It costs
+nothing (a read token) and helps both the no-volume cold start and volume staging. Only strictly
+*required* if you point `MODEL_NAME` at a gated repo.
 
 **Warm inference is fast.** The DeepGEMM kernel cache is baked into the image, so a warm worker
 skips the 10-20 min JIT recompile. Measured on 4 x H200:
@@ -100,7 +107,7 @@ when set to `true`/`1`/`yes`.
 | `DISABLE_SHARED_EXPERTS_FUSION` | `--disable-shared-experts-fusion` (bool) | `true` | Fork addition; required for this MoE. |
 | `EXTRA_ARGS` | raw shell-split passthrough | *(unset)* | Any flag not otherwise mapped, e.g. `--cuda-graph-max-bs 16` (fork escape hatch). |
 | `NCCL_SHM_DISABLE` | NCCL env (not a flag) | set `1` if TP init hangs | Multi-GPU: disables NCCL's /dev/shm transport (RunPod's tiny 64 MB shm can otherwise kill a TP worker at init). |
-| `HF_TOKEN` | Hugging Face auth | *(unset)* | Only needed for a **gated** `MODEL_NAME`; the default is public. |
+| `HF_TOKEN` | Hugging Face auth | *(unset, recommended)* | **Required** for a gated `MODEL_NAME`. Even for the public default, a read token authenticates the download and lifts anonymous HF rate limits, reducing 429 throttling on the 368 GB pull - faster, steadier cold start and staging. |
 | `HF_HUB_OFFLINE` | transformers/sglang: no hub calls | *(unset)* | Set `1` **only** in volume mode (local `/runpod-volume/...` path) so the loader never contacts HF. |
 
 **Do NOT set** `LOAD_FORMAT=fastsafetensors` (crashes the sglang v0.5.14 scheduler) or
