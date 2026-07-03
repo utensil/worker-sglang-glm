@@ -11,22 +11,22 @@ Upstream builds the `sglang.launch_server` command from a fixed env→flag mappi
 no escape hatch for flags it doesn't map. This fork adds:
 - `KV_CACHE_DTYPE` → `--kv-cache-dtype` (e.g. `fp8_e4m3`)
 - `DISABLE_SHARED_EXPERTS_FUSION` (boolean) → `--disable-shared-experts-fusion`
-- **`EXTRA_ARGS`** — a generic shell-split passthrough for any other raw flag, so a new
+- **`EXTRA_ARGS`** - a generic shell-split passthrough for any other raw flag, so a new
   flag never needs another fork.
 - a `[engine] launch: …` log line for observability
 
 `handler.py` is restructured to **start the model load in a background thread and call
-`runpod.serverless.start()` immediately** — the worker registers within seconds (beating
+`runpod.serverless.start()` immediately** - the worker registers within seconds (beating
 RunPod's ~500s recycle) and the first job waits for the load. Raise the per-request
 Execution Timeout to cover the first (cold) request.
 
 ## What's baked in
 - Base `lmsysorg/sglang:v0.5.14-cu129` (has GLM-5.2's `GlmMoeDsaForCausalLM` DSA arch + w4afp8).
-- **`dg_cache/deep_gemm/` → `/root/.cache/deep_gemm`** — the DeepGEMM JIT kernels (SM90/Hopper
+- **`dg_cache/deep_gemm/` → `/root/.cache/deep_gemm`** - the DeepGEMM JIT kernels (SM90/Hopper
   FP8 GEMM + GLM DSA indexer kernels) precompiled on a live 4×H200 pod, so a cold worker skips
   the JIT recompile (which otherwise crawls 10-20 min on the container disk / a volume).
   **Note:** sglang v0.5.14's DeepGEMM ignores `DG_JIT_CACHE_DIR` and reads the default
-  `~/.cache/deep_gemm` — that is why the cache is baked there, and why you should NOT set
+  `~/.cache/deep_gemm` - that is why the cache is baked there, and why you should NOT set
   `DG_JIT_CACHE_DIR`.
 
 ## Build / publish
@@ -41,7 +41,7 @@ This repo ships a Hub manifest. To list it: create a **GitHub Release** (the Hub
 releases, not commits), then in the RunPod console → **Hub → Add your repo** → paste this
 repo URL. RunPod scans/builds/tests, then a human review lists it.
 **Caveat for this model:** the automated Hub test spins a *fresh* worker with **no volume**,
-so it re-downloads the 368 GB checkpoint before it can answer — a **~35-40 min cold start**.
+so it re-downloads the 368 GB checkpoint before it can answer - a **~35-40 min cold start**.
 The bundled `tests.json` sets a long timeout accordingly; if the Hub pipeline caps test time
 below that, publish via (B) instead, or request a longer test window.
 
@@ -50,9 +50,9 @@ Console → **Serverless → New Endpoint** → import the public image
 `ghcr.io/utensil/worker-sglang-glm:latest`, set **4 GPUs (H200 141 GB) per worker**,
 **container disk 420 GB**, and the env below. Or create it programmatically (see `sless.py`
 in the companion `runpod-llm` skill). The endpoint is **private to your own RunPod API key**;
-sharing the template grants no cross-access — each instantiator runs under their own key.
+sharing the template grants no cross-access - each instantiator runs under their own key.
 
-**Env (no secrets; `HF_TOKEN` only for a gated `MODEL_NAME` — the default is public):**
+**Env (no secrets; `HF_TOKEN` only for a gated `MODEL_NAME` - the default is public):**
 ```
 MODEL_NAME=PhalaCloud/GLM-5.2-W4AFP8
 QUANTIZATION=w4afp8
@@ -73,16 +73,16 @@ NCCL_SHM_DISABLE=1
 
 **Warm inference** is ~2-3 s (the baked cache skips the JIT). Measured on 4×H200:
 **~68 tok/s single, ~456 peak, TTFT ~1-3 s** (near-flat TTFT up to ~18 k-token prompts).
-Cold-start numbers depend on the load mode — see **[Load modes](#load-modes)** below.
+Cold-start numbers depend on the load mode - see **[Load modes](#load-modes)** below.
 
 ## Deploy as a pod (published pod template)
 
 Besides the serverless manifest, a **public RunPod pod template** ships this same baked image +
-serve command for launching GLM-5.2 as a persistent GPU pod — find **"GLM-5.2-W4AFP8 (SGLang
+serve command for launching GLM-5.2 as a persistent GPU pod - find **"GLM-5.2-W4AFP8 (SGLang
 4xH200)"** in the console **Explore** section, or recreate it under your own account with
 `python3 create_pod_template.py` (self-contained; `--dry-run` prints the payload). Deploy it on
 **4×H200**, port 8000 = OpenAI API. It's env-driven, so the same template serves **both load
-modes** with no change — keep the default `MODEL_NAME` for no-volume, or set it to the
+modes** with no change - keep the default `MODEL_NAME` for no-volume, or set it to the
 `/runpod-volume/...` path + `HF_HUB_OFFLINE=1` and attach a staged volume (see below).
 
 ## Environment variables
@@ -118,10 +118,10 @@ Two ways to get the 368 GB of weights in front of the worker. Pick per your idle
 
 ### No-volume (default)
 - `MODEL_NAME=PhalaCloud/GLM-5.2-W4AFP8` (do **not** set `HF_HUB_OFFLINE`), container disk **420 GB**.
-- Cold start **≈ 36 min** — dominated by the 368 GB Hugging Face download on each fresh worker.
+- Cold start **≈ 36 min** - dominated by the 368 GB Hugging Face download on each fresh worker.
 - **$0 idle.** Best for weeks-idle / bursty use where you never pay for standing storage.
 
-### Volume (pre-staged weights — deterministic, not necessarily faster)
+### Volume (pre-staged weights - deterministic, not necessarily faster)
 - Run **`stage_volume.py`** once to pre-stage the weights onto a region-pinned RunPod network
   volume (see below), attach that volume to the endpoint, then set:
   ```
@@ -129,27 +129,27 @@ Two ways to get the 368 GB of weights in front of the worker. Pick per your idle
   HF_HUB_OFFLINE=1
   ```
   (keep every other env from the table above).
-- **Measured cold start ≈ 19 min** on 4×H200 — the **network-volume weight READ (~12 min)**
+- **Measured cold start ≈ 19 min** on 4×H200 - the **network-volume weight READ (~12 min)**
   dominates, + baked DeepGEMM ~2 min + graph ~4 min. **Reality check:** this is *not*
-  dramatically faster than no-volume — a **direct HF download to local disk on a fast H200 node
+  dramatically faster than no-volume - a **direct HF download to local disk on a fast H200 node
   was ~12.6 min total** (R4), so on a fast-network node **no-volume can actually beat a volume.**
   The 368 GB weight I/O is slow either way; pre-staging doesn't fix that.
 - **So a volume's real value is determinism, not speed:** it **caps** weight I/O at the volume
-  read time (~12 min) regardless of node network — a **hedge** against slow-download workers
+  read time (~12 min) regardless of node network - a **hedge** against slow-download workers
   (a no-volume *serverless* cold start was ~36 min on a slow worker), plus no re-download egress
   on repeat cold starts and no Hugging Face dependency. Pick it for *predictability*, not to go fast.
 - Small **standing $/mo** for the volume storage.
 - **Co-location constraint:** a RunPod network volume is datacenter-local, so the endpoint
   **must run in the volume's datacenter** (an `M22`-style region, e.g. the `stage_volume.py`
   default `US-GA-2`), and that datacenter **must have 4×H200 available**. If it doesn't, you
-  can't attach the volume there — fall back to no-volume mode or stage into a DC that has both.
+  can't attach the volume there - fall back to no-volume mode or stage into a DC that has both.
 
-#### Staging the volume — `stage_volume.py`
+#### Staging the volume - `stage_volume.py`
 A self-contained helper (stdlib + `requests` only) that stages the weights once:
 
 ```
 export RUNPOD_API_KEY=...
-python3 stage_volume.py --dry-run          # $0 — print the exact plan first
+python3 stage_volume.py --dry-run          # $0 - print the exact plan first
 python3 stage_volume.py                     # create-or-reuse volume, download, verify, sweep pod
 # uv run --with requests python stage_volume.py --dry-run   # if requests isn't in the base env
 ```
@@ -164,15 +164,15 @@ volume**. It prints the volume id, the on-volume model path, and the volume-mode
 sweeps a volume you no longer need. `HF_TOKEN` (env) is forwarded for gated repos but the
 default model is public.
 
-**Staging is slow — budget ~1-2 h (and it's a one-time cost).** Writing 368 GB to a *network*
+**Staging is slow - budget ~1-2 h (and it's a one-time cost).** Writing 368 GB to a *network*
 volume is bound by the volume's **write throughput** (~45-150 MB/s), *not* the GPU node's
-download speed — a fast GPU does not make it much faster, so the cheap default (L4) is the right
+download speed - a fast GPU does not make it much faster, so the cheap default (L4) is the right
 pick. `huggingface-cli download` is **resumable**: if a run hits `--timeout-min`, just re-run
 (it skips completed shards and continues; expect it to re-verify existing files on the volume
 first, which itself takes a while). Raise `--timeout-min` (default 120) for fewer re-runs.
 
 **GPU/capacity tips (verified the hard way):**
-- Community capacity is unreliable in the H200 datacenters this targets — if `--compute GPU`
+- Community capacity is unreliable in the H200 datacenters this targets - if `--compute GPU`
   can't place, pass **`--cloud SECURE`**; a **SECURE L4 (~$0.43/hr)** is a reliable cheap staging box.
 - `--gpus` values are RunPod **REST gpu-type ids**, which differ from console *display* names
   (e.g. "H100 SXM" → `NVIDIA H100 80GB HBM3`, and L4 → `NVIDIA L4`). A `400 … items/enum` error
