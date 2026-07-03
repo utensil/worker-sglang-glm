@@ -1,5 +1,8 @@
 # worker-sglang-glm
 
+[![Deploy the GLM-5.2 pod template on RunPod](https://img.shields.io/badge/Deploy-GLM--5.2%20Pod-673AB7?style=for-the-badge)](https://console.runpod.io/deploy?template=uud9e7iajt&ref=km0th85l)
+[![Deploy the GLM-5.2 serverless template on RunPod](https://img.shields.io/badge/Deploy-GLM--5.2%20Serverless-673AB7?style=for-the-badge)](https://console.runpod.io/deploy?template=3zla5fv3z9&ref=km0th85l)
+
 A thin fork of [`runpod-workers/worker-sglang`](https://github.com/runpod-workers/worker-sglang)
 (v2.0.2) that serves **GLM-5.2-W4AFP8** on RunPod Serverless: it adds the launch flags the
 model needs, **bakes the DeepGEMM JIT cache into the image** for fast warm inference, and
