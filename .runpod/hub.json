@@ -1,6 +1,6 @@
 {
   "title": "GLM-5.2 (W4AFP8 · SGLang)",
-  "description": "Serve GLM-5.2 - a 753B-total / ~40B-active MoE with DSA sparse attention and up to 1M context - as an OpenAI-compatible serverless endpoint. W4AFP8 (4-bit experts + FP8 activations) on SGLang v0.5.14, with the DeepGEMM JIT kernel cache baked into the image so warm inference skips recompilation. A register-first background-load handler beats RunPod's ~500s worker-recycle window on this large model. No secrets are baked; the endpoint is private to your own RunPod API key.",
+  "description": "GLM-5.2 (753B MoE, W4AFP8) as an OpenAI-compatible serverless endpoint on SGLang v0.5.14. DeepGEMM cache baked in for warm inference; register-first handler beats the recycle window.",
   "type": "serverless",
   "category": "language",
   "iconUrl": "https://dummyimage.com/100x100/1f6feb/ffffff&text=GLM",
