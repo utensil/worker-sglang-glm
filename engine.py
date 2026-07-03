@@ -82,15 +82,40 @@ class SGlangEngine:
             "DISABLE_SHARED_EXPERTS_FUSION",   # GLM-5.2-W4AFP8 MoE
         ]
 
-        # Add options from environment variables only if they are set
+        # Defaults so this worker serves GLM-5.2-W4AFP8 correctly with ZERO env
+        # config. The RunPod Hub build/test injects none of hub.json's env
+        # defaults, so without these fallbacks the launch command is modelless
+        # (just --host/--port) and every fitness check fails. Each value is still
+        # overridable by setting the matching env var at deploy time.
+        defaults = {
+            "MODEL_NAME": "PhalaCloud/GLM-5.2-W4AFP8",
+            "QUANTIZATION": "w4afp8",
+            "KV_CACHE_DTYPE": "fp8_e4m3",
+            "REASONING_PARSER": "glm45",
+            "TOOL_CALL_PARSER": "glm47",
+            "CONTEXT_LENGTH": "32768",
+            "MEM_FRACTION_STATIC": "0.85",
+            "TENSOR_PARALLEL_SIZE": "4",
+        }
+        boolean_defaults = {"DISABLE_SHARED_EXPERTS_FUSION", "TRUST_REMOTE_CODE"}
+
+        # Add options: env var if set, else the GLM default.
         for env_var, option in options.items():
             value = os.getenv(env_var)
+            if value is None or value == "":
+                value = defaults.get(env_var)
             if value is not None and value != "":
                 command.extend([option, value])
 
-        # Add boolean flags only if they are set to true
+        # Add boolean flags: respect an explicit env value; else default-on for
+        # the flags GLM-5.2 requires (shared-experts-fusion off, trust-remote-code).
         for flag in boolean_flags:
-            if os.getenv(flag, "").lower() in ("true", "1", "yes"):
+            set_val = os.getenv(flag)
+            if set_val is not None and set_val != "":
+                on = set_val.lower() in ("true", "1", "yes")
+            else:
+                on = flag in boolean_defaults
+            if on:
                 command.append(f"--{flag.lower().replace('_', '-')}")
 
         # Generic passthrough: any raw sglang.launch_server flags not covered by
