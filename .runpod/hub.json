@@ -1,6 +1,6 @@
 {
   "title": "GLM-5.2 (W4AFP8 · SGLang)",
-  "description": "Serve GLM-5.2 — a 753B-total / ~40B-active MoE with DSA sparse attention and up to 1M context — as an OpenAI-compatible serverless endpoint. W4AFP8 (4-bit experts + FP8 activations) on SGLang v0.5.14, with the DeepGEMM JIT kernel cache baked into the image so warm inference skips recompilation. A register-first background-load handler beats RunPod's ~500s worker-recycle window on this large model. No secrets are baked; the endpoint is private to your own RunPod API key.",
+  "description": "Serve GLM-5.2 - a 753B-total / ~40B-active MoE with DSA sparse attention and up to 1M context - as an OpenAI-compatible serverless endpoint. W4AFP8 (4-bit experts + FP8 activations) on SGLang v0.5.14, with the DeepGEMM JIT kernel cache baked into the image so warm inference skips recompilation. A register-first background-load handler beats RunPod's ~500s worker-recycle window on this large model. No secrets are baked; the endpoint is private to your own RunPod API key.",
   "type": "serverless",
   "category": "language",
   "iconUrl": "https://dummyimage.com/100x100/1f6feb/ffffff&text=GLM",
@@ -11,7 +11,7 @@
     "gpuCount": 4,
     "allowedCudaVersions": ["12.9", "12.8"],
     "env": [
-      { "key": "MODEL_NAME", "input": { "name": "Model checkpoint (HF repo)", "type": "string", "description": "W4AFP8 checkpoint to serve. The default is public — no token needed.", "default": "PhalaCloud/GLM-5.2-W4AFP8", "advanced": true } },
+      { "key": "MODEL_NAME", "input": { "name": "Model checkpoint (HF repo)", "type": "string", "description": "W4AFP8 checkpoint to serve. The default is public - no token needed.", "default": "PhalaCloud/GLM-5.2-W4AFP8", "advanced": true } },
       { "key": "QUANTIZATION", "input": { "name": "Quantization", "type": "string", "description": "SGLang --quantization", "default": "w4afp8", "advanced": true } },
       { "key": "TENSOR_PARALLEL_SIZE", "input": { "name": "Tensor-parallel size", "type": "string", "description": "Must equal GPU count (4 for this model on H200).", "default": "4", "advanced": true } },
       { "key": "CONTEXT_LENGTH", "input": { "name": "Max context length", "type": "string", "description": "Up to 1048576; 32768 is a fast default. Larger context needs more KV-cache VRAM.", "default": "32768", "advanced": false } },
@@ -19,11 +19,11 @@
       { "key": "REASONING_PARSER", "input": { "name": "Reasoning parser", "type": "string", "default": "glm45", "advanced": true } },
       { "key": "TOOL_CALL_PARSER", "input": { "name": "Tool-call parser", "type": "string", "default": "glm47", "advanced": true } },
       { "key": "KV_CACHE_DTYPE", "input": { "name": "KV-cache dtype", "type": "string", "default": "fp8_e4m3", "advanced": true } },
-      { "key": "TRUST_REMOTE_CODE", "input": { "name": "Trust remote code", "type": "string", "description": "Required — GLM-5.2 ships custom modeling code.", "default": "true", "advanced": true } },
+      { "key": "TRUST_REMOTE_CODE", "input": { "name": "Trust remote code", "type": "string", "description": "Required - GLM-5.2 ships custom modeling code.", "default": "true", "advanced": true } },
       { "key": "DISABLE_SHARED_EXPERTS_FUSION", "input": { "name": "Disable shared-experts fusion", "type": "string", "description": "Required for the W4AFP8 MoE path.", "default": "true", "advanced": true } },
       { "key": "EXTRA_ARGS", "input": { "name": "Extra sglang.launch_server args", "type": "string", "description": "Passed through verbatim. --cuda-graph-max-bs 16 trims cold-start graph capture.", "default": "--cuda-graph-max-bs 16", "advanced": true } },
       { "key": "NCCL_SHM_DISABLE", "input": { "name": "Disable NCCL shared memory", "type": "string", "description": "Required for multi-GPU tensor-parallel inside a RunPod container (the 64MB /dev/shm is too small).", "default": "1", "advanced": true } },
-      { "key": "HF_TOKEN", "input": { "name": "Hugging Face token (optional)", "type": "string", "description": "Only needed if you point MODEL_NAME at a GATED repo. The default checkpoint is public — leave blank. Never bake a token into the image.", "default": "", "advanced": true } }
+      { "key": "HF_TOKEN", "input": { "name": "Hugging Face token (optional)", "type": "string", "description": "Only needed if you point MODEL_NAME at a GATED repo. The default checkpoint is public - leave blank. Never bake a token into the image.", "default": "", "advanced": true } }
     ]
   }
 }
