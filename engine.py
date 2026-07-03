@@ -94,7 +94,12 @@ class SGlangEngine:
             "KV_CACHE_DTYPE": "fp8_e4m3",
             "REASONING_PARSER": "glm45",
             "TOOL_CALL_PARSER": "glm47",
-            "CONTEXT_LENGTH": "32768",
+            # This is the :hicache branch, tuned for long-context reuse: a longer
+            # default context and a KV pool sized to hold a full-length sequence,
+            # both overridable. For very long contexts (say 500k) raise both to
+            # match your VRAM (verified boot+serve at 64k ctx / 150k pool).
+            "CONTEXT_LENGTH": "131072",
+            "MAX_TOTAL_TOKENS": "150000",
             "MEM_FRACTION_STATIC": "0.85",
             "TENSOR_PARALLEL_SIZE": "4",
         }
@@ -121,13 +126,12 @@ class SGlangEngine:
 
         # HiCache: tier the KV cache to host RAM (GPU -> CPU) so a large reused
         # context that no longer fits in the GPU pool is RESTORED from CPU instead
-        # of recomputed. Off by default (adds write-through overhead and only pays
-        # off for long-context REUSE). Measured on 4xH200 at 43k tokens: an evicted
-        # context re-read in 2.5s vs 7.7s recompute (~3x); the win grows with
-        # context length, so turn it on for 100k+ reuse-heavy workloads. Set a
-        # roomy CONTEXT_LENGTH + MAX_TOTAL_TOKENS, and raise HICACHE_RATIO to hold
-        # more in the CPU tier. See README "HiCache (long-context KV offload)".
-        if os.getenv("ENABLE_HICACHE", "").lower() in ("true", "1", "yes"):
+        # of recomputed. ON by default on this :hicache branch (this image exists
+        # for long-context reuse workloads). Measured on 4xH200 at 43k tokens: an
+        # evicted context re-read in 2.5s vs 7.7s recompute (~3x); the win grows
+        # with context length. Raise HICACHE_RATIO to hold more in the CPU tier.
+        # Set ENABLE_HICACHE=false to turn it off. See README "HiCache".
+        if os.getenv("ENABLE_HICACHE", "true").lower() in ("true", "1", "yes"):
             command.append("--enable-hierarchical-cache")
             hicache = {
                 "--hicache-ratio": os.getenv("HICACHE_RATIO", "2"),
