@@ -75,6 +75,41 @@ pre-stage the weights on a network volume (a deterministic ~19 min - see [Load m
 Note that on a fast node a plain no-volume download can be about as quick, so a volume mainly buys
 *predictability*, not raw speed.
 
+## HiCache (long-context KV offload)
+
+**On by default on this branch.** The `:hicache` image exists for long-context, reuse-heavy
+workloads - load a large document or session once, then ask many questions against it. Deploy it
+when that's your pattern; set `ENABLE_HICACHE=false` to turn it off.
+
+**What it does.** It tiers the KV cache from GPU to host RAM. When a large reused context no
+longer fits in the GPU KV pool, HiCache **restores it from CPU** instead of recomputing the whole
+prefill from scratch.
+
+**When it helps (measured on 4 x H200).** The payoff scales with context length, because it only
+saves you the recompute you would otherwise pay:
+- At **18k** tokens: no benefit - recomputing an evicted prefix is only ~4 s, nothing to save.
+- At **43k** tokens: an evicted context re-read in **2.5 s vs 7.7 s recompute (~3x faster)**.
+- At **100k-500k**: a recompute is tens of seconds to minutes, so restoring from CPU saves
+  proportionally more. Rule of thumb: **worth it above ~50k reuse; below that, use `:latest`.**
+
+**Defaults on this branch (all overridable):**
+```
+ENABLE_HICACHE=true         # already on here
+CONTEXT_LENGTH=131072       # 128k; raise for longer contexts (more KV VRAM)
+MAX_TOTAL_TOKENS=150000     # GPU KV pool; holds one full-length sequence
+HICACHE_RATIO=2             # CPU tier size = ratio x GPU pool; raise it to hold more
+```
+For a very long context (say your 500k pattern), raise `CONTEXT_LENGTH` and `MAX_TOTAL_TOKENS`
+together to match your VRAM (verified boot+serve at 64k ctx / 150k pool; higher needs a boot check).
+The actively-reused context stays hot in the CPU tier and keeps restoring cheaply; only the
+*oldest* contexts age out (LRU), so raise `HICACHE_RATIO` if you juggle several big contexts. The
+remaining knobs have sensible defaults: `HICACHE_IO_BACKEND=kernel`, `HICACHE_MEM_LAYOUT=page_first`,
+`HICACHE_WRITE_POLICY=write_through`, `PAGE_SIZE=64`.
+
+**Image:** this capability ships on the **`hicache` branch / `:hicache` image tag**
+(`ghcr.io/utensil/worker-sglang-glm:hicache`), kept separate from the default `:latest` so the
+published template stays frozen. Deploy that tag to use it.
+
 ## Deploy as a pod (published pod template)
 
 Besides the serverless template, a **public RunPod pod template** ships this same baked image +
@@ -98,7 +133,7 @@ when set to `true`/`1`/`yes`.
 | `MODEL_NAME` | `--model-path` | `PhalaCloud/GLM-5.2-W4AFP8` **or** `/runpod-volume/GLM-5.2-W4AFP8` | HF id (no-volume) or on-volume local path (volume mode). |
 | `QUANTIZATION` | `--quantization` | `w4afp8` | The model's quant scheme. |
 | `TENSOR_PARALLEL_SIZE` | `--tensor-parallel-size` | `4` | Must equal the GPU count per worker (4 x H200). |
-| `CONTEXT_LENGTH` | `--context-length` | `32768` | Max sequence length. Raise for longer contexts (needs more KV VRAM). |
+| `CONTEXT_LENGTH` | `--context-length` | `131072` | Max sequence length (long-context default on this branch; `:latest` is 32768). Needs more KV VRAM. |
 | `MEM_FRACTION_STATIC` | `--mem-fraction-static` | `0.85` | Fraction of VRAM for weights + KV. |
 | `REASONING_PARSER` | `--reasoning-parser` | `glm45` | Parses GLM reasoning output. |
 | `TOOL_CALL_PARSER` | `--tool-call-parser` | `glm47` | Parses GLM tool calls. |
@@ -106,6 +141,9 @@ when set to `true`/`1`/`yes`.
 | `TRUST_REMOTE_CODE` | `--trust-remote-code` (bool) | `true` | Needed for the GLM custom arch. |
 | `DISABLE_SHARED_EXPERTS_FUSION` | `--disable-shared-experts-fusion` (bool) | `true` | Fork addition; required for this MoE. |
 | `EXTRA_ARGS` | raw shell-split passthrough | *(unset)* | Any flag not otherwise mapped, e.g. `--cuda-graph-max-bs 16` (fork escape hatch). |
+| `ENABLE_HICACHE` | `--enable-hierarchical-cache` + tier knobs (bool) | `true` (on, this branch) | KV offload to host RAM for long-context reuse. Set `false` to disable. See [HiCache](#hicache-long-context-kv-offload) for `HICACHE_RATIO` etc. |
+| `PAGE_SIZE` | `--page-size` | *(unset; 64 under HiCache)* | KV page size. HiCache `page_first` layout needs it, defaulted to 64. |
+| `MAX_TOTAL_TOKENS` | `--max-total-tokens` | `150000` (this branch) | GPU KV pool size. Larger = fewer evictions (relevant with HiCache). |
 | `NCCL_SHM_DISABLE` | NCCL env (not a flag) | set `1` if TP init hangs | Multi-GPU: disables NCCL's /dev/shm transport (RunPod's tiny 64 MB shm can otherwise kill a TP worker at init). |
 | `HF_TOKEN` | Hugging Face auth | *(unset, recommended)* | **Required** for a gated `MODEL_NAME`. Even for the public default, a read token authenticates the download and lifts anonymous HF rate limits, reducing 429 throttling on the 368 GB pull - faster, steadier cold start and staging. |
 | `HF_HUB_OFFLINE` | transformers/sglang: no hub calls | *(unset)* | Set `1` **only** in volume mode (local `/runpod-volume/...` path) so the loader never contacts HF. |

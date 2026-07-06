@@ -64,6 +64,7 @@ class SGlangEngine:
             "REASONING_PARSER": "--reasoning-parser",
             # --- GLM-5.2-W4AFP8 additions (upstream worker-sglang lacks these) ---
             "KV_CACHE_DTYPE": "--kv-cache-dtype",          # e.g. fp8_e4m3
+            "PAGE_SIZE": "--page-size",                    # KV page size (HiCache page_first needs it)
         }
 
         # Boolean flags
@@ -93,7 +94,12 @@ class SGlangEngine:
             "KV_CACHE_DTYPE": "fp8_e4m3",
             "REASONING_PARSER": "glm45",
             "TOOL_CALL_PARSER": "glm47",
-            "CONTEXT_LENGTH": "32768",
+            # This is the :hicache branch, tuned for long-context reuse: a longer
+            # default context and a KV pool sized to hold a full-length sequence,
+            # both overridable. For very long contexts (say 500k) raise both to
+            # match your VRAM (verified boot+serve at 64k ctx / 150k pool).
+            "CONTEXT_LENGTH": "131072",
+            "MAX_TOTAL_TOKENS": "150000",
             "MEM_FRACTION_STATIC": "0.85",
             "TENSOR_PARALLEL_SIZE": "4",
         }
@@ -117,6 +123,27 @@ class SGlangEngine:
                 on = flag in boolean_defaults
             if on:
                 command.append(f"--{flag.lower().replace('_', '-')}")
+
+        # HiCache: tier the KV cache to host RAM (GPU -> CPU) so a large reused
+        # context that no longer fits in the GPU pool is RESTORED from CPU instead
+        # of recomputed. ON by default on this :hicache branch (this image exists
+        # for long-context reuse workloads). Measured on 4xH200 at 43k tokens: an
+        # evicted context re-read in 2.5s vs 7.7s recompute (~3x); the win grows
+        # with context length. Raise HICACHE_RATIO to hold more in the CPU tier.
+        # Set ENABLE_HICACHE=false to turn it off. See README "HiCache".
+        if os.getenv("ENABLE_HICACHE", "true").lower() in ("true", "1", "yes"):
+            command.append("--enable-hierarchical-cache")
+            hicache = {
+                "--hicache-ratio": os.getenv("HICACHE_RATIO", "2"),
+                "--hicache-io-backend": os.getenv("HICACHE_IO_BACKEND", "kernel"),
+                "--hicache-mem-layout": os.getenv("HICACHE_MEM_LAYOUT", "page_first"),
+                "--hicache-write-policy": os.getenv("HICACHE_WRITE_POLICY", "write_through"),
+            }
+            for flag, val in hicache.items():
+                command.extend([flag, val])
+            # page_first layout needs an explicit page size; default it if unset.
+            if "--page-size" not in command:
+                command.extend(["--page-size", "64"])
 
         # Generic passthrough: any raw sglang.launch_server flags not covered by
         # the mappings above (so a new flag never needs another fork). Parsed
